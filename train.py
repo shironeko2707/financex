@@ -83,7 +83,7 @@ class GRUModel(nn.Module):
         return self.head(out)
 
 class LSTMGRUEnsemble(nn.Module):
-    def __init__(self, num_features, hidden_dim=128, n_layers=4, dropout=0.08, seq_len=SEQ_LEN):
+    def __init__(self, num_features, hidden_dim=128, n_layers=4, dropout=0.1, seq_len=SEQ_LEN):
         super().__init__()
         self.lstm = nn.LSTM(num_features, hidden_dim, n_layers,
                             batch_first=True, dropout=dropout if n_layers > 1 else 0,
@@ -206,7 +206,7 @@ DROPOUT = 0.1
 
 LEARNING_RATE = 5e-4
 INPUT_NOISE = 0.04
-WEIGHT_DECAY = 8e-2
+WEIGHT_DECAY = 0.1
 BATCH_SIZE = 64
 
 WARMUP_RATIO = 0.05
@@ -215,7 +215,7 @@ FINAL_LR_FRAC = 0.05
 
 VAL_INTERVAL = 10
 RDROP_ALPHA = 1.5
-LABEL_SMOOTH = 0.05
+LABEL_SMOOTH = 0.02
 CONF_PENALTY = 0.12
 
 # ---------------------------------------------------------------------------

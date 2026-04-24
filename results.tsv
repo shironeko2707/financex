@@ -21,4 +21,9 @@ VNINDEX	e7002bc	0.563327	0.1246	discard	lstm_gru_ensemble batch=32
 VNINDEX	e7002bc	0.563327	0.1659	discard	lstm_gru_ensemble hidden=256
 VNINDEX	e7002bc	0.576560	0.0042	discard	lstm_gru_ensemble WD=1e-3
 VNINDEX	running	0.568998	0.8510	keep	lstm_gru_ensemble WD=0.1 sharpe=0.85
-VNINDEX	running	0.570888	0.0628	discard	lstm_gru_ensemble WD=0.08
+VNINDEX	06b0a9d	0.570888	0.0628	discard	lstm_gru_ensemble WD=0.08
+VNINDEX	06b0a9d	0.561437	0.3081	discard	lstm_gru_ensemble WD=0.1 dropout=0.05
+VNINDEX	06b0a9d	0.555766	-0.0218	discard	lstm_gru_ensemble LR=1e-4
+VNINDEX	06b0a9d	0.570888	0.1258	discard	lstm_gru_ensemble RDROP=2.5
+VNINDEX	06b0a9d	0.561437	0.1042	discard	lstm_gru_ensemble RDROP=0.5
+VNINDEX	06b0a9d	0.576560	0.3219	keep	lstm_gru_ensemble label_smooth=0.02
