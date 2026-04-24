@@ -82,6 +82,31 @@ class GRUModel(nn.Module):
         out = out[:, -1]
         return self.head(out)
 
+class GRUWithTCN(nn.Module):
+    def __init__(self, num_features, hidden_dim=128, n_layers=4, dropout=0.1, seq_len=SEQ_LEN):
+        super().__init__()
+        self.gru = nn.GRU(num_features, hidden_dim, n_layers,
+                          batch_first=True, dropout=dropout if n_layers > 1 else 0,
+                          bidirectional=True)
+        self.tcn = TCNModel(num_features=num_features, channels=hidden_dim//2, n_layers=4, dropout=dropout, seq_len=seq_len)
+        combined = hidden_dim * 2 + hidden_dim // 2
+        self.head = nn.Sequential(
+            nn.LayerNorm(combined),
+            nn.Dropout(dropout),
+            nn.Linear(combined, 128),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        gru_out, _ = self.gru(x)  # (B, T, 2H)
+        gru_out = gru_out[:, -1]   # (B, 2H)
+        tcn_out = self.tcn(x)     # (B, 1)
+        tcn_out = tcn_out.squeeze(-1)  # (B,)
+        combined = torch.cat([gru_out, tcn_out], dim=-1)
+        return self.head(combined)
+
 class LSTMGRUEnsemble(nn.Module):
     def __init__(self, num_features, hidden_dim=128, n_layers=4, dropout=0.1, seq_len=SEQ_LEN):
         super().__init__()
@@ -204,7 +229,7 @@ N_HEADS = 4
 N_LAYERS = 4
 DROPOUT = 0.1
 
-LEARNING_RATE = 5e-4
+LEARNING_RATE = 3e-4
 INPUT_NOISE = 0.04
 WEIGHT_DECAY = 0.1
 BATCH_SIZE = 64
@@ -215,7 +240,7 @@ FINAL_LR_FRAC = 0.05
 
 VAL_INTERVAL = 10
 RDROP_ALPHA = 1.5
-LABEL_SMOOTH = 0.02
+LABEL_SMOOTH = 0.05
 CONF_PENALTY = 0.12
 
 # ---------------------------------------------------------------------------
