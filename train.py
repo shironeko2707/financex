@@ -62,12 +62,37 @@ print(f"Device: {device_type}")
 # Model
 # ---------------------------------------------------------------------------
 
-class GRUModel(nn.Module):
-    def __init__(self, num_features, hidden_dim=128, n_layers=4, dropout=0.1, seq_len=SEQ_LEN):
+class LSTMGRUEnsemble(nn.Module):
+    def __init__(self, num_features, hidden_dim=128, n_layers=3, dropout=0.1, seq_len=SEQ_LEN):
         super().__init__()
+        self.lstm = nn.LSTM(num_features, hidden_dim, n_layers,
+                            batch_first=True, dropout=dropout if n_layers > 1 else 0,
+                            bidirectional=True)
         self.gru = nn.GRU(num_features, hidden_dim, n_layers,
                           batch_first=True, dropout=dropout if n_layers > 1 else 0,
                           bidirectional=True)
+        combined = hidden_dim * 4
+        self.head = nn.Sequential(
+            nn.LayerNorm(combined),
+            nn.Dropout(dropout),
+            nn.Linear(combined, 128),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+        gru_out, _ = self.gru(x)
+        combined = torch.cat([lstm_out[:, -1], gru_out[:, -1]], dim=-1)
+        return self.head(combined)
+
+class LSTMWithAttention(nn.Module):
+    def __init__(self, num_features, hidden_dim=128, n_layers=4, dropout=0.1, seq_len=SEQ_LEN):
+        super().__init__()
+        self.lstm = nn.LSTM(num_features, hidden_dim, n_layers,
+                            batch_first=True, dropout=dropout if n_layers > 1 else 0,
+                            bidirectional=True)
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_dim * 2),
             nn.Dropout(dropout),
@@ -78,7 +103,7 @@ class GRUModel(nn.Module):
         )
 
     def forward(self, x):
-        out, _ = self.gru(x)
+        out, _ = self.lstm(x)
         out = out[:, -1]
         return self.head(out)
 
@@ -135,7 +160,7 @@ DROPOUT = 0.2
 
 LEARNING_RATE = 5e-4
 INPUT_NOISE = 0.04
-WEIGHT_DECAY = 4e-2
+WEIGHT_DECAY = 1e-2
 BATCH_SIZE = 64
 
 WARMUP_RATIO = 0.05
@@ -166,7 +191,7 @@ print(f"Num features: {num_features}")
 print(f"Baseline accuracy: {max(targets[:train_size].mean(), 1-targets[:train_size].mean()):.4f}")
 
 # Build model
-model = GRUModel(
+model = LSTMWithAttention(
     num_features=num_features,
     hidden_dim=MODEL_DIM,
     n_layers=N_LAYERS,

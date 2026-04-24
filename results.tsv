@@ -1,4 +1,14 @@
 ticker	commit	val_accuracy	val_sharpe	status	description
 VNINDEX	0cdd016	0.557656	-0.2177	keep	lstm bidirectional hidden=128 n_layers=2
-VNINDEX	running	0.540643	0.2235	discard	cnn1d channels=64 n_blocks=4
-VNINDEX	running	0.572779	0.1618	keep	gru bidirectional hidden=64 n_layers=4
+VNINDEX	3978e24	0.540643	0.2235	discard	cnn1d channels=64 n_blocks=4
+VNINDEX	3978e24	0.572779	0.1618	keep	gru bidirectional hidden=64 n_layers=4
+VNINDEX	3978e24	0.580340	0.1448	keep	gru bidirectional hidden=128 n_layers=4 wider_head
+VNINDEX	3978e24	0.572779	0.6099	keep	gru hidden=128 n_layers=4 dropout=0.05
+VNINDEX	3978e24	0.576560	0.5466	keep	gru hidden=128 n_layers=4 input_norm
+VNINDEX	3978e24	0.555766	-0.0218	discard	gru hidden=128 n_layers=6
+VNINDEX	3978e24	0.572779	0.0311	keep	gru hidden=128 n_layers=4 wider_head replicate
+VNINDEX	running	0.567108	0.6485	keep	lstm_gru_ensemble hidden=128 n_layers=3
+VNINDEX	3978e24	0.555766	-0.0218	discard	gru+attention mean_pool dropout=0.1 WD=0.01
+VNINDEX	3978e24	0.559546	-0.0242	discard	gru mean_pooling hidden=128
+VNINDEX	running	0.570888	-0.1054	discard	gru hidden=128 dropout=0.15 WD=0.01
+VNINDEX	running	0.568998	-0.0465	discard	lstm bidirectional hidden=128 wider_head
