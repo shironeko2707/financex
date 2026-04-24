@@ -1,1 +1,4 @@
 ticker	commit	val_accuracy	val_sharpe	status	description
+VNINDEX	0cdd016	0.557656	-0.2177	keep	lstm bidirectional hidden=128 n_layers=2
+VNINDEX	running	0.540643	0.2235	discard	cnn1d channels=64 n_blocks=4
+VNINDEX	running	0.572779	0.1618	keep	gru bidirectional hidden=64 n_layers=4

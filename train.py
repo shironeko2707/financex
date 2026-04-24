@@ -62,25 +62,67 @@ print(f"Device: {device_type}")
 # Model
 # ---------------------------------------------------------------------------
 
-class LSTMModel(nn.Module):
-    def __init__(self, num_features, hidden_dim=128, n_layers=2, dropout=0.2, seq_len=SEQ_LEN):
+class GRUModel(nn.Module):
+    def __init__(self, num_features, hidden_dim=128, n_layers=4, dropout=0.1, seq_len=SEQ_LEN):
         super().__init__()
-        self.lstm = nn.LSTM(num_features, hidden_dim, n_layers,
-                            batch_first=True, dropout=dropout if n_layers > 1 else 0,
-                            bidirectional=True)
+        self.gru = nn.GRU(num_features, hidden_dim, n_layers,
+                          batch_first=True, dropout=dropout if n_layers > 1 else 0,
+                          bidirectional=True)
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_dim * 2),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim * 2, 64),
+            nn.Linear(hidden_dim * 2, 128),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        out, _ = self.gru(x)
+        out = out[:, -1]
+        return self.head(out)
+
+class TCNBlock(nn.Module):
+    def __init__(self, in_ch, out_ch, kernel_size, dilation, dropout=0.2):
+        super().__init__()
+        padding = (kernel_size - 1) * dilation // 2
+        self.conv1 = nn.Conv1d(in_ch, out_ch, kernel_size, padding=padding, dilation=dilation)
+        self.bn1 = nn.BatchNorm1d(out_ch)
+        self.conv2 = nn.Conv1d(out_ch, out_ch, kernel_size, padding=padding, dilation=dilation)
+        self.bn2 = nn.BatchNorm1d(out_ch)
+        self.dropout = nn.Dropout(dropout)
+        self.residual = nn.Conv1d(in_ch, out_ch, 1) if in_ch != out_ch else nn.Identity()
+
+    def forward(self, x):
+        h = self.dropout(torch.relu(self.bn1(self.conv1(x))))
+        h = self.dropout(torch.relu(self.bn2(self.conv2(h))))
+        return h + self.residual(x)
+
+
+class TCNModel(nn.Module):
+    def __init__(self, num_features, channels=64, n_layers=8, dropout=0.2, seq_len=SEQ_LEN):
+        super().__init__()
+        self.blocks = nn.ModuleList()
+        in_ch = num_features
+        for i in range(n_layers):
+            dilation = 2 ** (i % 6)
+            self.blocks.append(TCNBlock(in_ch, channels, kernel_size=7, dilation=dilation, dropout=dropout))
+            in_ch = channels
+        self.head = nn.Sequential(
+            nn.Conv1d(channels, channels, 1),
+            nn.AdaptiveAvgPool1d(1),
+            nn.Flatten(),
+            nn.Linear(channels, 64),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(64, 1),
         )
 
     def forward(self, x):
-        out, _ = self.lstm(x)
-        out = out[:, -1]
-        return self.head(out)
+        x = x.transpose(1, 2)
+        for block in self.blocks:
+            x = block(x)
+        return self.head(x)
 
 # ---------------------------------------------------------------------------
 # Hyperparameters (best config from BTC experiments)
@@ -88,7 +130,7 @@ class LSTMModel(nn.Module):
 
 MODEL_DIM = 128
 N_HEADS = 4
-N_LAYERS = 2
+N_LAYERS = 4
 DROPOUT = 0.2
 
 LEARNING_RATE = 5e-4
@@ -124,7 +166,7 @@ print(f"Num features: {num_features}")
 print(f"Baseline accuracy: {max(targets[:train_size].mean(), 1-targets[:train_size].mean()):.4f}")
 
 # Build model
-model = LSTMModel(
+model = GRUModel(
     num_features=num_features,
     hidden_dim=MODEL_DIM,
     n_layers=N_LAYERS,
