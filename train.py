@@ -58,36 +58,29 @@ print(f"Device: {device_type}")
 # Model
 # ---------------------------------------------------------------------------
 
-class TimeSeriesTransformer(nn.Module):
-    def __init__(self, num_features, model_dim=128, n_heads=4, n_layers=3,
-                 dropout=0.1, seq_len=SEQ_LEN):
+# ---------------------------------------------------------------------------
+# Model
+# ---------------------------------------------------------------------------
+
+class LSTMModel(nn.Module):
+    def __init__(self, num_features, hidden_dim=128, n_layers=2, dropout=0.2, seq_len=SEQ_LEN):
         super().__init__()
-        self.model_dim = model_dim
-
-        self.input_proj = nn.Linear(num_features, model_dim)
-        self.pos_embed = nn.Parameter(torch.randn(1, seq_len, model_dim) * 0.02)
-
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=model_dim,
-            nhead=n_heads,
-            dim_feedforward=model_dim * 4,
-            dropout=dropout,
-            activation="gelu",
-            batch_first=True,
-            norm_first=True,
+        self.lstm = nn.LSTM(num_features, hidden_dim, n_layers,
+                            batch_first=True, dropout=dropout if n_layers > 1 else 0,
+                            bidirectional=True)
+        self.head = nn.Sequential(
+            nn.LayerNorm(hidden_dim * 2),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, 64),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(64, 1),
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
-
-        self.norm = nn.LayerNorm(model_dim)
-        self.head = nn.Linear(model_dim, 1)
 
     def forward(self, x):
-        x = self.input_proj(x)
-        x = x + self.pos_embed[:, :x.size(1)]
-        x = self.transformer(x)
-        x = x[:, -1]
-        x = self.norm(x)
-        return self.head(x)
+        out, _ = self.lstm(x)
+        out = out[:, -1]
+        return self.head(out)
 
 # ---------------------------------------------------------------------------
 # Hyperparameters (best config from BTC experiments)
@@ -95,8 +88,8 @@ class TimeSeriesTransformer(nn.Module):
 
 MODEL_DIM = 128
 N_HEADS = 4
-N_LAYERS = 3
-DROPOUT = 0.1
+N_LAYERS = 2
+DROPOUT = 0.2
 
 LEARNING_RATE = 5e-4
 INPUT_NOISE = 0.04
@@ -131,10 +124,9 @@ print(f"Num features: {num_features}")
 print(f"Baseline accuracy: {max(targets[:train_size].mean(), 1-targets[:train_size].mean()):.4f}")
 
 # Build model
-model = TimeSeriesTransformer(
+model = LSTMModel(
     num_features=num_features,
-    model_dim=MODEL_DIM,
-    n_heads=N_HEADS,
+    hidden_dim=MODEL_DIM,
     n_layers=N_LAYERS,
     dropout=DROPOUT,
     seq_len=SEQ_LEN,
