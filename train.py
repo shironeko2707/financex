@@ -62,8 +62,28 @@ print(f"Device: {device_type}")
 # Model
 # ---------------------------------------------------------------------------
 
+class GRUModel(nn.Module):
+    def __init__(self, num_features, hidden_dim=128, n_layers=4, dropout=0.1, seq_len=SEQ_LEN):
+        super().__init__()
+        self.gru = nn.GRU(num_features, hidden_dim, n_layers,
+                          batch_first=True, dropout=dropout if n_layers > 1 else 0,
+                          bidirectional=True)
+        self.head = nn.Sequential(
+            nn.LayerNorm(hidden_dim * 2),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim * 2, 128),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        out, _ = self.gru(x)
+        out = out[:, -1]
+        return self.head(out)
+
 class LSTMGRUEnsemble(nn.Module):
-    def __init__(self, num_features, hidden_dim=128, n_layers=3, dropout=0.1, seq_len=SEQ_LEN):
+    def __init__(self, num_features, hidden_dim=128, n_layers=4, dropout=0.08, seq_len=SEQ_LEN):
         super().__init__()
         self.lstm = nn.LSTM(num_features, hidden_dim, n_layers,
                             batch_first=True, dropout=dropout if n_layers > 1 else 0,
@@ -106,6 +126,32 @@ class LSTMWithAttention(nn.Module):
         out, _ = self.lstm(x)
         out = out[:, -1]
         return self.head(out)
+
+class TransformerPool(nn.Module):
+    def __init__(self, num_features, model_dim=128, n_heads=4, n_layers=3, dropout=0.1, seq_len=SEQ_LEN):
+        super().__init__()
+        self.input_proj = nn.Linear(num_features, model_dim)
+        self.pos_embed = nn.Parameter(torch.randn(1, seq_len, model_dim) * 0.02)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=model_dim, nhead=n_heads, dim_feedforward=model_dim * 4,
+            dropout=dropout, activation="gelu", batch_first=True, norm_first=True,
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.head = nn.Sequential(
+            nn.LayerNorm(model_dim),
+            nn.Dropout(dropout),
+            nn.Linear(model_dim, 128),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 1),
+        )
+
+    def forward(self, x):
+        x = self.input_proj(x)
+        x = x + self.pos_embed[:, :x.size(1)]
+        x = self.transformer(x)
+        x = x.mean(dim=1)
+        return self.head(x)
 
 class TCNBlock(nn.Module):
     def __init__(self, in_ch, out_ch, kernel_size, dilation, dropout=0.2):
@@ -155,12 +201,12 @@ class TCNModel(nn.Module):
 
 MODEL_DIM = 128
 N_HEADS = 4
-N_LAYERS = 4
-DROPOUT = 0.2
+N_LAYERS = 5
+DROPOUT = 0.05
 
 LEARNING_RATE = 5e-4
 INPUT_NOISE = 0.04
-WEIGHT_DECAY = 1e-2
+WEIGHT_DECAY = 4e-2
 BATCH_SIZE = 64
 
 WARMUP_RATIO = 0.05
@@ -191,7 +237,7 @@ print(f"Num features: {num_features}")
 print(f"Baseline accuracy: {max(targets[:train_size].mean(), 1-targets[:train_size].mean()):.4f}")
 
 # Build model
-model = LSTMWithAttention(
+model = GRUModel(
     num_features=num_features,
     hidden_dim=MODEL_DIM,
     n_layers=N_LAYERS,
