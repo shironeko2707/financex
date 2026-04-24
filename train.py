@@ -201,12 +201,12 @@ class TCNModel(nn.Module):
 
 MODEL_DIM = 128
 N_HEADS = 4
-N_LAYERS = 5
-DROPOUT = 0.05
+N_LAYERS = 4
+DROPOUT = 0.1
 
 LEARNING_RATE = 5e-4
 INPUT_NOISE = 0.04
-WEIGHT_DECAY = 4e-2
+WEIGHT_DECAY = 8e-2
 BATCH_SIZE = 64
 
 WARMUP_RATIO = 0.05
@@ -237,7 +237,7 @@ print(f"Num features: {num_features}")
 print(f"Baseline accuracy: {max(targets[:train_size].mean(), 1-targets[:train_size].mean()):.4f}")
 
 # Build model
-model = GRUModel(
+model = LSTMGRUEnsemble(
     num_features=num_features,
     hidden_dim=MODEL_DIM,
     n_layers=N_LAYERS,

@@ -16,4 +16,9 @@ VNINDEX	running	0.561437	0.3796	discard	transformer mean_pool hidden=128 n_layer
 VNINDEX	running	0.580340	0.3382	keep	lstm_gru_ensemble hidden=128 n_layers=4 dropout=0.05
 VNINDEX	running	0.563327	0.1858	discard	lstm_gru_ensemble dropout=0.08
 VNINDEX	running	0.559546	0.3026	discard	lstm_gru_ensemble LR=1e-3
-VNINDEX	running	0.568998	-0.1314	discard	gru hidden=128 n_layers=5 dropout=0.05
+VNINDEX	0300fcb	0.568998	-0.1314	discard	gru hidden=128 n_layers=5 dropout=0.05
+VNINDEX	e7002bc	0.563327	0.1246	discard	lstm_gru_ensemble batch=32
+VNINDEX	e7002bc	0.563327	0.1659	discard	lstm_gru_ensemble hidden=256
+VNINDEX	e7002bc	0.576560	0.0042	discard	lstm_gru_ensemble WD=1e-3
+VNINDEX	running	0.568998	0.8510	keep	lstm_gru_ensemble WD=0.1 sharpe=0.85
+VNINDEX	running	0.570888	0.0628	discard	lstm_gru_ensemble WD=0.08
