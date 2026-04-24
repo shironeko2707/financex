@@ -1,0 +1,12 @@
+[project]
+name = "autoresearch-vn"
+version = "0.1.0"
+description = "Autonomous ML research for Vietnam stock market prediction"
+requires-python = ">=3.10"
+dependencies = [
+    "torch>=2.0",
+    "vnstock>=3.0",
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "mlflow>=2.0",
+]
