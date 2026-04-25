@@ -41,3 +41,8 @@ VNINDEX	d0c9853	0.567108	-0.4080	discard	lstm_gru_ensemble hidden=192
 VNINDEX	d0c9853	0.582231	-0.1673	discard	gru hidden=192 CONF_PENALTY=0.08 WD=0.02
 VNINDEX	d0c9853	0.582231	0.1748	keep	gru hidden=192 WD=0.03 RDROP=1.0
 VNINDEX	d0c9853	0.586011	0.6219	keep	gru hidden=192 n_layers=3 WD=0.05
+VNINDEX	412e0cd	0.586011	0.3188	discard	gru hidden=192 WD=0.045
+VNINDEX	412e0cd	0.565217	0.2744	discard	lstm_gru_ensemble hidden=192 dropout=0.1
+VNINDEX	412e0cd	0.582231	-0.2519	discard	gru hidden=192 RDROP=2.0
+VNINDEX	412e0cd	0.589792	0.4586	keep	gru hidden=192 n_layers=3 RDROP=1.2
+VNINDEX	412e0cd	0.586011	-0.1447	discard	gru hidden=192 RDROP=1.3
