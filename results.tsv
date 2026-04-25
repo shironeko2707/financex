@@ -51,3 +51,5 @@ VNINDEX	e818ea4	0.570888	0.7980	keep	transformer mean_pool n_heads=4 n_layers=3 
 VNINDEX	e818ea4	0.555766	-0.0218	discard	transformer 8 heads
 VNINDEX	e818ea4	0.559546	0.5556	keep	transformer n_layers=4 n_heads=4 model_dim=192
 VNINDEX	e818ea4	0.559546	-0.0465	discard	transformer n_layers=5
+VNINDEX	366ca54	0.563327	0.1393	discard	transformer model_dim=256
+VNINDEX	366ca54	0.582231	0.8502	keep	transformer mean_pool dropout=0.15 model_dim=192
