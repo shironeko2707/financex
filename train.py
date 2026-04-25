@@ -230,7 +230,7 @@ N_LAYERS = 3
 DROPOUT = 0.25
 
 LEARNING_RATE = 5e-4
-INPUT_NOISE = 0.03
+INPUT_NOISE = 0.04
 WEIGHT_DECAY = 4.5e-2
 BATCH_SIZE = 64
 
@@ -240,7 +240,7 @@ FINAL_LR_FRAC = 0.05
 
 VAL_INTERVAL = 10
 RDROP_ALPHA = 1.5
-LABEL_SMOOTH = 0.01
+LABEL_SMOOTH = 0.015
 CONF_PENALTY = 0.15
 
 # ---------------------------------------------------------------------------
