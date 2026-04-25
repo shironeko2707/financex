@@ -36,3 +36,8 @@ VNINDEX	38b45de	0.572779	0.2573	keep	gru hidden=96 n_layers=5
 VNINDEX	38b45de	0.584121	0.6245	keep	gru hidden=192 n_layers=3 dropout=0.15 *** NEW BEST ***
 VNINDEX	38b45de	0.591682	0.3757	keep	gru hidden=192 n_layers=3 dropout=0.15 replicate
 VNINDEX	38b45de	0.582231	0.1287	discard	gru hidden=192 n_layers=3 WD=0.06
+VNINDEX	d0c9853	0.578450	-0.2824	discard	gru hidden=192 dropout=0.2 INPUT_NOISE=0.05
+VNINDEX	d0c9853	0.567108	-0.4080	discard	lstm_gru_ensemble hidden=192
+VNINDEX	d0c9853	0.582231	-0.1673	discard	gru hidden=192 CONF_PENALTY=0.08 WD=0.02
+VNINDEX	d0c9853	0.582231	0.1748	keep	gru hidden=192 WD=0.03 RDROP=1.0
+VNINDEX	d0c9853	0.586011	0.6219	keep	gru hidden=192 n_layers=3 WD=0.05
