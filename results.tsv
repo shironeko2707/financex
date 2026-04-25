@@ -53,3 +53,8 @@ VNINDEX	e818ea4	0.559546	0.5556	keep	transformer n_layers=4 n_heads=4 model_dim=
 VNINDEX	e818ea4	0.559546	-0.0465	discard	transformer n_layers=5
 VNINDEX	366ca54	0.563327	0.1393	discard	transformer model_dim=256
 VNINDEX	366ca54	0.582231	0.8502	keep	transformer mean_pool dropout=0.15 model_dim=192
+VNINDEX	a9cc5bf	0.561437	-0.0518	discard	transformer dropout=0.18
+VNINDEX	a9cc5bf	0.568998	0.9022	keep	transformer CONF_PENALTY=0.15 *** NEW BEST SHARPE ***
+VNINDEX	a9cc5bf	0.555766	-0.0218	discard	transformer CONF_PENALTY=0.15 replicate
+VNINDEX	a9cc5bf	0.555766	-0.0218	discard	transformer CONF_PENALTY=0.18
+VNINDEX	a9cc5bf	0.563327	0.7287	keep	transformer WEIGHT_DECAY=0.06
