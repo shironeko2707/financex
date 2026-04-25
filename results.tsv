@@ -46,3 +46,8 @@ VNINDEX	412e0cd	0.565217	0.2744	discard	lstm_gru_ensemble hidden=192 dropout=0.1
 VNINDEX	412e0cd	0.582231	-0.2519	discard	gru hidden=192 RDROP=2.0
 VNINDEX	412e0cd	0.589792	0.4586	keep	gru hidden=192 n_layers=3 RDROP=1.2
 VNINDEX	412e0cd	0.586011	-0.1447	discard	gru hidden=192 RDROP=1.3
+VNINDEX	e818ea4	0.578450	0.1594	discard	gru hidden=192 label_smooth=0.03
+VNINDEX	e818ea4	0.570888	0.7980	keep	transformer mean_pool n_heads=4 n_layers=3 model_dim=192
+VNINDEX	e818ea4	0.555766	-0.0218	discard	transformer 8 heads
+VNINDEX	e818ea4	0.559546	0.5556	keep	transformer n_layers=4 n_heads=4 model_dim=192
+VNINDEX	e818ea4	0.559546	-0.0465	discard	transformer n_layers=5
