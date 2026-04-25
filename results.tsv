@@ -31,3 +31,8 @@ VNINDEX	8d3c231	0.565217	-0.0435	discard	replicate best sharpe config
 VNINDEX	8d3c231	0.565217	-0.0012	discard	INPUT_NOISE=0.02 CONF_PENALTY=0.2
 VNINDEX	8d3c231	0.578450	0.2363	keep	gru best config reset
 VNINDEX	8d3c231	0.561437	0.1564	discard	lstm_gru_ensemble LR=3e-4
+VNINDEX	38b45de	0.565217	-0.2706	discard	INPUT_NOISE=0.03 CONF_PENALTY=0.15 RDROP=1.0
+VNINDEX	38b45de	0.572779	0.2573	keep	gru hidden=96 n_layers=5
+VNINDEX	38b45de	0.584121	0.6245	keep	gru hidden=192 n_layers=3 dropout=0.15 *** NEW BEST ***
+VNINDEX	38b45de	0.591682	0.3757	keep	gru hidden=192 n_layers=3 dropout=0.15 replicate
+VNINDEX	38b45de	0.582231	0.1287	discard	gru hidden=192 n_layers=3 WD=0.06
