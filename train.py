@@ -227,7 +227,7 @@ class TCNModel(nn.Module):
 MODEL_DIM = 192
 N_HEADS = 4
 N_LAYERS = 3
-DROPOUT = 0.2
+DROPOUT = 0.17
 
 LEARNING_RATE = 5e-4
 INPUT_NOISE = 0.04
@@ -240,7 +240,7 @@ FINAL_LR_FRAC = 0.05
 
 VAL_INTERVAL = 10
 RDROP_ALPHA = 1.5
-LABEL_SMOOTH = 0.02
+LABEL_SMOOTH = 0.01
 CONF_PENALTY = 0.15
 
 # ---------------------------------------------------------------------------
@@ -262,10 +262,9 @@ print(f"Num features: {num_features}")
 print(f"Baseline accuracy: {max(targets[:train_size].mean(), 1-targets[:train_size].mean()):.4f}")
 
 # Build model
-model = TransformerPool(
+model = GRUModel(
     num_features=num_features,
-    model_dim=MODEL_DIM,
-    n_heads=N_HEADS,
+    hidden_dim=MODEL_DIM,
     n_layers=N_LAYERS,
     dropout=DROPOUT,
     seq_len=SEQ_LEN,
