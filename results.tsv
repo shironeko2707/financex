@@ -58,3 +58,7 @@ VNINDEX	a9cc5bf	0.568998	0.9022	keep	transformer CONF_PENALTY=0.15 *** NEW BEST 
 VNINDEX	a9cc5bf	0.555766	-0.0218	discard	transformer CONF_PENALTY=0.15 replicate
 VNINDEX	a9cc5bf	0.555766	-0.0218	discard	transformer CONF_PENALTY=0.18
 VNINDEX	a9cc5bf	0.563327	0.7287	keep	transformer WEIGHT_DECAY=0.06
+VNINDEX	dfbea21	0.584121	0.0045	discard	lstm_gru_ensemble CONF_PENALTY=0.15
+VNINDEX	dfbea21	0.591682	-0.0520	discard	gru WEIGHT_DECAY=0.08
+VNINDEX	dfbea21	0.584121	-0.1241	discard	gru WEIGHT_DECAY=0.03
+VNINDEX	dfbea21	0.574669	0.2096	keep	gru RDROP=1.0

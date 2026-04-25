@@ -231,7 +231,7 @@ DROPOUT = 0.155
 
 LEARNING_RATE = 5e-4
 INPUT_NOISE = 0.04
-WEIGHT_DECAY = 6e-2
+WEIGHT_DECAY = 5e-2
 BATCH_SIZE = 64
 
 WARMUP_RATIO = 0.05
@@ -239,9 +239,9 @@ WARMDOWN_RATIO = 0.3
 FINAL_LR_FRAC = 0.05
 
 VAL_INTERVAL = 10
-RDROP_ALPHA = 1.2
+RDROP_ALPHA = 1.0
 LABEL_SMOOTH = 0.05
-CONF_PENALTY = 0.12
+CONF_PENALTY = 0.15
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -262,10 +262,9 @@ print(f"Num features: {num_features}")
 print(f"Baseline accuracy: {max(targets[:train_size].mean(), 1-targets[:train_size].mean()):.4f}")
 
 # Build model
-model = TransformerPool(
+model = GRUModel(
     num_features=num_features,
-    model_dim=MODEL_DIM,
-    n_heads=N_HEADS,
+    hidden_dim=MODEL_DIM,
     n_layers=N_LAYERS,
     dropout=DROPOUT,
     seq_len=SEQ_LEN,
