@@ -227,7 +227,7 @@ class TCNModel(nn.Module):
 MODEL_DIM = 192
 N_HEADS = 4
 N_LAYERS = 3
-DROPOUT = 0.155
+DROPOUT = 0.15
 
 LEARNING_RATE = 5e-4
 INPUT_NOISE = 0.04
@@ -239,9 +239,9 @@ WARMDOWN_RATIO = 0.3
 FINAL_LR_FRAC = 0.05
 
 VAL_INTERVAL = 10
-RDROP_ALPHA = 1.0
+RDROP_ALPHA = 1.5
 LABEL_SMOOTH = 0.05
-CONF_PENALTY = 0.15
+CONF_PENALTY = 0.12
 
 # ---------------------------------------------------------------------------
 # Setup
