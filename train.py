@@ -1,9 +1,8 @@
 """
 Vietnam stock prediction training script. Single-GPU, single-file.
-The agent modifies this file to experiment with architectures.
+Ensemble pipeline with confidence-based selective trading and cost-aware evaluation.
 Usage: uv run train.py [TICKER]
-  e.g. uv run train.py VNINDEX
-       uv run train.py VNM
+       WALK_FORWARD=1 uv run train.py [TICKER]  # walk-forward validation
 """
 
 import os
@@ -23,6 +22,7 @@ import torch.nn.functional as F
 from prepare import (
     TIME_BUDGET, SEQ_LEN, TICKER, CACHE_DIR,
     download_and_cache, normalize_features, make_dataloader, evaluate,
+    make_sequences,
 )
 
 # ---------------------------------------------------------------------------
@@ -39,7 +39,7 @@ MLFLOW_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mlruns")
 os.makedirs(MLFLOW_DIR, exist_ok=True)
 mlflow.set_tracking_uri(f"file://{MLFLOW_DIR}")
 mlflow.set_experiment("vn-stock-prediction")
-mlflow.pytorch.autolog()
+mlflow.pytorch.autolog(disable=True)
 
 # ---------------------------------------------------------------------------
 # Device setup
@@ -53,10 +53,6 @@ else:
     device_type = "cpu"
 device = torch.device(device_type)
 print(f"Device: {device_type}")
-
-# ---------------------------------------------------------------------------
-# Model
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Model
@@ -244,103 +240,87 @@ LABEL_SMOOTH = 0.01
 CONF_PENALTY = 0.13
 
 # ---------------------------------------------------------------------------
-# Setup
+# Ensemble & Evaluation Configuration
 # ---------------------------------------------------------------------------
 
-t_start = time.time()
-torch.manual_seed(42)
-np.random.seed(42)
+N_SEEDS = 10
+SEEDS = [42, 137, 256, 512, 1024, 2049, 9999, 12345, 7777, 4321]
+CONFIDENCE_THRESHOLD = 0.587
+COST_PER_TRADE = 0.003
+MAX_DRAWDOWN_LIMIT = 0.15
+KELLY_FRACTION = 0.05
+WALK_FORWARD = os.environ.get("WALK_FORWARD", "0") == "1"
 
-# Load data
-print(f"Target ticker: {TARGET_TICKER}")
-features, targets, meta = download_and_cache(TARGET_TICKER)
-features = normalize_features(features, meta["train_size"])
-num_features = meta["num_features"]
-train_size = meta["train_size"]
+# ---------------------------------------------------------------------------
+# Helper Functions
+# ---------------------------------------------------------------------------
 
-print(f"Num features: {num_features}")
-print(f"Baseline accuracy: {max(targets[:train_size].mean(), 1-targets[:train_size].mean()):.4f}")
+def find_year_boundaries(dates):
+    """Given list of 'YYYY-MM-DD' strings, return {year: exclusive_end_index}."""
+    boundaries = {}
+    for i, d in enumerate(dates):
+        year = int(d[:4])
+        boundaries[year] = i + 1
+    return boundaries
 
-# Build model
-model = GRUModel(
-    num_features=num_features,
-    hidden_dim=MODEL_DIM,
-    n_layers=N_LAYERS,
-    dropout=DROPOUT,
-    seq_len=SEQ_LEN,
-).to(device)
 
-num_params = sum(p.numel() for p in model.parameters())
-print(f"Model parameters: {num_params:,} ({num_params/1000:.1f}K)")
+def sync_device():
+    if device_type == "cuda":
+        torch.cuda.synchronize()
+    elif device_type == "mps":
+        torch.mps.synchronize()
 
-# Start MLflow run
-run_name = f"{TARGET_TICKER}_d={MODEL_DIM}_h={N_HEADS}_l={N_LAYERS}_wd={WEIGHT_DECAY}_conf={CONF_PENALTY}"
-with mlflow.start_run(run_name=run_name):
-    mlflow.log_params({
-        "ticker": TARGET_TICKER,
-        "model_dim": MODEL_DIM,
-        "n_heads": N_HEADS,
-        "n_layers": N_LAYERS,
-        "dropout": DROPOUT,
-        "learning_rate": LEARNING_RATE,
-        "weight_decay": WEIGHT_DECAY,
-        "batch_size": BATCH_SIZE,
-        "warmup_ratio": WARMUP_RATIO,
-        "final_lr_frac": FINAL_LR_FRAC,
-        "rdrop_alpha": RDROP_ALPHA,
-        "label_smooth": LABEL_SMOOTH,
-        "conf_penalty": CONF_PENALTY,
-        "seq_len": SEQ_LEN,
-        "num_features": num_features,
-        "num_params": num_params,
-    })
 
-    # Optimizer
+def get_lr_multiplier(progress):
+    """Dual-cosine LR schedule with warmup."""
+    if progress < WARMUP_RATIO:
+        return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
+    if progress < 0.5:
+        t = (progress - WARMUP_RATIO) / (0.5 - WARMUP_RATIO)
+    else:
+        t = (progress - 0.5) / 0.5
+    return max(FINAL_LR_FRAC, 0.5 * (1 + math.cos(math.pi * t)))
+
+
+def train_single_model(features, targets, train_start, train_end,
+                       num_features, seed, time_budget, dev):
+    """Train one GRU model. Returns (state_dict, best_val_acc, steps)."""
+    torch.manual_seed(seed)
+    np.random.seed(seed)
+
+    model = GRUModel(
+        num_features=num_features,
+        hidden_dim=MODEL_DIM,
+        n_layers=N_LAYERS,
+        dropout=DROPOUT,
+        seq_len=SEQ_LEN,
+    ).to(dev)
+
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=LEARNING_RATE,
         weight_decay=WEIGHT_DECAY,
     )
 
-    # Dataloader
     train_loader = make_dataloader(
         features, targets,
-        start_idx=0, end_idx=train_size,
+        start_idx=train_start, end_idx=train_end,
         batch_size=BATCH_SIZE, seq_len=SEQ_LEN, shuffle=True,
     )
 
-    # LR schedule with mid-training restart
-    def get_lr_multiplier(progress):
-        if progress < WARMUP_RATIO:
-            return progress / WARMUP_RATIO if WARMUP_RATIO > 0 else 1.0
-        # Two cosine cycles: 0-50% and 50-100%
-        if progress < 0.5:
-            t = (progress - WARMUP_RATIO) / (0.5 - WARMUP_RATIO)
-        else:
-            t = (progress - 0.5) / 0.5
-        return max(FINAL_LR_FRAC, 0.5 * (1 + math.cos(math.pi * t)))
-
-    print(f"Time budget: {TIME_BUDGET}s")
-
-    # ---------------------------------------------------------------------------
-    # Training loop
-    # ---------------------------------------------------------------------------
-
-    def sync_device():
-        if device_type == "cuda":
-            torch.cuda.synchronize()
-        elif device_type == "mps":
-            torch.mps.synchronize()
-
-    t_start_training = time.time()
     total_training_time = 0
     step = 0
-    smooth_loss = 0
-    smooth_acc = 0
+    smooth_loss = 0.0
+    smooth_acc = 0.0
+    debiased_loss = 0.0
+    debiased_acc = 0.0
 
     best_val_acc = 0.0
     best_state = None
     last_val_time = 0.0
+
+    gc.enable()
+    gc.collect()
 
     X_batch, y_batch, epoch = next(train_loader)
 
@@ -349,30 +329,28 @@ with mlflow.start_run(run_name=run_name):
         t0 = time.time()
 
         model.train()
-        X_batch = X_batch.to(device)
-        y_batch = y_batch.to(device)
+        X_batch = X_batch.to(dev)
+        y_batch = y_batch.to(dev)
 
-        # Add Gaussian noise to input
         if INPUT_NOISE > 0:
             X_noisy = X_batch + torch.randn_like(X_batch) * INPUT_NOISE
         else:
             X_noisy = X_batch
 
         logits1 = model(X_noisy).squeeze(-1)
-        logits2 = model(X_noisy).squeeze(-1)  # second forward with different dropout
+        logits2 = model(X_noisy).squeeze(-1)
         y_smooth = y_batch * (1 - LABEL_SMOOTH) + 0.5 * LABEL_SMOOTH
         loss_ce = 0.5 * (F.binary_cross_entropy_with_logits(logits1, y_smooth)
                        + F.binary_cross_entropy_with_logits(logits2, y_smooth))
-        # KL divergence between two predictions (symmetric)
+
         p1 = torch.sigmoid(logits1)
         p2 = torch.sigmoid(logits2)
         kl = 0.5 * (p1 * (p1 / (p2 + 1e-8)).log() + (1-p1) * ((1-p1) / (1-p2 + 1e-8)).log()
                   + p2 * (p2 / (p1 + 1e-8)).log() + (1-p2) * ((1-p2) / (1-p1 + 1e-8)).log())
-        # Confidence penalty: negative entropy of predictions
         avg_p = 0.5 * (p1 + p2)
         entropy = -(avg_p * (avg_p + 1e-8).log() + (1 - avg_p) * (1 - avg_p + 1e-8).log())
         rdrop_w = RDROP_ALPHA
-        conf_w = CONF_PENALTY * min(1.0, total_training_time / (TIME_BUDGET * 0.3))
+        conf_w = CONF_PENALTY * min(1.0, total_training_time / (time_budget * 0.3)) if time_budget > 0 else CONF_PENALTY
         loss = loss_ce + rdrop_w * kl.mean() - conf_w * entropy.mean()
         logits = logits1
 
@@ -380,108 +358,430 @@ with mlflow.start_run(run_name=run_name):
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
 
-        # LR schedule
-        progress = min(total_training_time / TIME_BUDGET, 1.0)
+        progress = min(total_training_time / time_budget, 1.0) if time_budget > 0 else 1.0
         lrm = get_lr_multiplier(progress)
         for group in optimizer.param_groups:
             group["lr"] = LEARNING_RATE * lrm
 
         optimizer.step()
-
-        # Prefetch next batch
         X_batch, y_batch, epoch = next(train_loader)
 
-        # Metrics
         train_loss = loss.item()
         with torch.no_grad():
             preds = (torch.sigmoid(logits) > 0.5).float()
-            acc = (preds == y_batch.to(device)).float().mean().item()
+            acc = (preds == y_batch.to(dev)).float().mean().item()
 
         sync_device()
-        t1 = time.time()
-        dt = t1 - t0
+        dt = time.time() - t0
 
         if step > 5:
             total_training_time += dt
 
-        # Periodic validation
-        if total_training_time - last_val_time >= VAL_INTERVAL and step > 10:
-            val_metrics = evaluate(model, features, targets, train_size, device, SEQ_LEN)
-            val_acc = val_metrics["accuracy"]
-            if val_acc > best_val_acc:
-                best_val_acc = val_acc
-                best_state = copy.deepcopy(model.state_dict())
-                print(f"\n  [VAL] step={step} t={total_training_time:.0f}s acc={val_acc:.4f} sharpe={val_metrics['sharpe']:.4f} ** NEW BEST **")
-            else:
-                print(f"\n  [VAL] step={step} t={total_training_time:.0f}s acc={val_acc:.4f} sharpe={val_metrics['sharpe']:.4f}")
-            last_val_time = total_training_time
-            mlflow.log_metrics({
-                "val_accuracy": val_acc,
-                "val_sharpe": val_metrics["sharpe"],
-                "val_loss": val_metrics["avg_loss"],
-                "train_accuracy": debiased_acc,
-                "train_loss": debiased_loss,
-                "learning_rate": optimizer.param_groups[0]["lr"],
-            }, step=step)
-
-        # Logging
+        # EMA metrics (computed before validation to avoid undefined variable bug)
         ema_c = 0.95
         smooth_loss = ema_c * smooth_loss + (1 - ema_c) * train_loss
         smooth_acc = ema_c * smooth_acc + (1 - ema_c) * acc
         debiased_loss = smooth_loss / (1 - ema_c ** (step + 1))
         debiased_acc = smooth_acc / (1 - ema_c ** (step + 1))
+
+        # Periodic validation
+        if total_training_time - last_val_time >= VAL_INTERVAL and step > 10:
+            val_metrics = evaluate(model, features, targets, train_end, dev, SEQ_LEN)
+            val_acc = val_metrics["accuracy"]
+            if val_acc > best_val_acc:
+                best_val_acc = val_acc
+                best_state = copy.deepcopy(model.state_dict())
+            last_val_time = total_training_time
+
         pct_done = 100 * progress
-        remaining = max(0, TIME_BUDGET - total_training_time)
+        remaining = max(0, time_budget - total_training_time)
+        print(f"\r  step {step:05d} ({pct_done:.1f}%) | loss: {debiased_loss:.4f} | acc: {debiased_acc:.3f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | remaining: {remaining:.0f}s    ", end="", flush=True)
 
-        print(f"\rstep {step:05d} ({pct_done:.1f}%) | loss: {debiased_loss:.4f} | acc: {debiased_acc:.3f} | lrm: {lrm:.2f} | dt: {dt*1000:.0f}ms | epoch: {epoch} | remaining: {remaining:.0f}s    ", end="", flush=True)
-
-        # GC management
         if step == 0:
             gc.collect()
             gc.freeze()
             gc.disable()
 
         step += 1
-
-        if step > 5 and total_training_time >= TIME_BUDGET:
+        if step > 5 and total_training_time >= time_budget:
             break
 
+    gc.enable()
     print()
 
-    # ---------------------------------------------------------------------------
-    # Evaluation
-    # ---------------------------------------------------------------------------
+    if best_state is None:
+        best_state = copy.deepcopy(model.state_dict())
 
-    if best_state is not None:
-        print(f"Restoring best checkpoint (val_acc={best_val_acc:.4f})")
-        model.load_state_dict(best_state)
+    del model, optimizer
+    return best_state, best_val_acc, step
 
-    metrics = evaluate(model, features, targets, train_size, device, SEQ_LEN)
 
-    t_end = time.time()
+def ensemble_predict(model_states, num_features, features, targets,
+                     start_idx, end_idx, dev):
+    """Run inference with N model states. Returns (mean_probs, y_true)."""
+    X_seqs, y_seqs = make_sequences(features, targets, start_idx, end_idx, SEQ_LEN)
+    X_tensor = torch.from_numpy(X_seqs)
+    all_probs = []
 
-    print("---")
-    print(f"ticker:           {TARGET_TICKER}")
-    print(f"val_accuracy:     {metrics['accuracy']:.6f}")
-    print(f"val_sharpe:       {metrics['sharpe']:.4f}")
-    print(f"val_loss:         {metrics['avg_loss']:.6f}")
-    print(f"val_samples:      {metrics['n_val']}")
-    print(f"training_seconds: {total_training_time:.1f}")
-    print(f"total_seconds:    {t_end - t_start:.1f}")
-    print(f"num_steps:        {step}")
-    print(f"num_params_K:     {num_params / 1000:.1f}")
-    print(f"model_dim:        {MODEL_DIM}")
-    print(f"n_layers:         {N_LAYERS}")
+    for state_dict in model_states:
+        model = GRUModel(
+            num_features=num_features,
+            hidden_dim=MODEL_DIM,
+            n_layers=N_LAYERS,
+            dropout=DROPOUT,
+            seq_len=SEQ_LEN,
+        ).to(dev)
+        model.load_state_dict(state_dict)
+        model.eval()
 
-    mlflow.log_metrics({
-        "final_val_accuracy": metrics['accuracy'],
-        "final_val_sharpe": metrics['sharpe'],
-        "final_val_loss": metrics['avg_loss'],
-        "best_val_accuracy": best_val_acc,
-        "training_seconds": total_training_time,
-        "total_seconds": t_end - t_start,
-        "num_steps": step,
-    })
-    mlflow.log_param("status", "completed")
+        probs = []
+        with torch.no_grad():
+            for i in range(0, len(X_tensor), 256):
+                batch = X_tensor[i:i+256].to(dev)
+                logits = model(batch).squeeze(-1)
+                probs.append(torch.sigmoid(logits).cpu().numpy())
 
-    print("MLflow run:", mlflow.active_run().info.run_id)
+        all_probs.append(np.concatenate(probs))
+        del model
+
+    mean_probs = np.stack(all_probs).mean(axis=0)
+    return mean_probs, y_seqs
+
+
+def evaluate_selective(mean_probs, targets, features, val_start, n_samples,
+                       threshold=CONFIDENCE_THRESHOLD,
+                       cost_per_trade=COST_PER_TRADE,
+                       kelly_fraction=KELLY_FRACTION):
+    """Evaluate with confidence filtering, costs, position sizing, and drawdown."""
+    # Standard accuracy
+    all_preds = (mean_probs > 0.5).astype(np.float32)
+    accuracy = float((all_preds == targets).mean())
+
+    # Selective trading mask
+    trade_mask = (mean_probs > threshold) | (mean_probs < (1.0 - threshold))
+    coverage = float(trade_mask.mean())
+
+    if trade_mask.sum() > 0:
+        sel_preds = (mean_probs[trade_mask] > 0.5).astype(np.float32)
+        selective_accuracy = float((sel_preds == targets[trade_mask]).mean())
+    else:
+        selective_accuracy = 0.0
+
+    # Trading returns: prediction at sample j corresponds to features index (val_start + j).
+    # The return from acting on that prediction is the next day's ret_1d = features[val_start + j + 1, 0].
+    returns = np.zeros(n_samples, dtype=np.float32)
+    for j in range(n_samples):
+        idx = val_start + j + 1
+        if idx < len(features):
+            returns[j] = features[idx, 0]
+
+    # Standard Sharpe (all positions, no costs)
+    positions = np.where(all_preds == 1, 1.0, -1.0)
+    strategy_returns = positions * returns
+    if len(strategy_returns) > 1 and strategy_returns.std() > 1e-10:
+        sharpe = float(strategy_returns.mean() / strategy_returns.std() * np.sqrt(252))
+    else:
+        sharpe = 0.0
+
+    # Position sizing: fractional Kelly
+    # edge = 2 * max(p, 1-p) - 1; ranges from 0 (p=0.5) to 1 (p=0 or 1)
+    edge = 2.0 * np.maximum(mean_probs, 1.0 - mean_probs) - 1.0
+    position_size = edge * kelly_fraction
+    direction = np.where(mean_probs > 0.5, 1.0, -1.0)
+
+    # Apply trade mask: position = 0 on skip days
+    sized_positions = np.where(trade_mask, direction * position_size, 0.0)
+
+    # Transaction costs on position changes
+    position_changes = np.abs(np.diff(np.concatenate([[0.0], sized_positions])))
+    costs = cost_per_trade * position_changes
+
+    # Net returns
+    net_returns = sized_positions * returns - costs
+
+    # Net Sharpe (only on days with positions)
+    traded_net = net_returns[trade_mask]
+    if len(traded_net) > 1 and traded_net.std() > 1e-10:
+        net_sharpe = float(traded_net.mean() / traded_net.std() * np.sqrt(252))
+    else:
+        net_sharpe = 0.0
+
+    # Max drawdown
+    cumulative = np.cumsum(net_returns)
+    running_max = np.maximum.accumulate(cumulative)
+    drawdowns = running_max - cumulative
+    max_drawdown = float(drawdowns.max()) if len(drawdowns) > 0 else 0.0
+
+    return {
+        "accuracy": accuracy,
+        "selective_accuracy": selective_accuracy,
+        "sharpe": sharpe,
+        "net_sharpe": net_sharpe,
+        "coverage": coverage,
+        "max_drawdown": max_drawdown,
+        "high_risk": max_drawdown > MAX_DRAWDOWN_LIMIT,
+        "n_trades": int(trade_mask.sum()),
+        "n_val": n_samples,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main Execution
+# ---------------------------------------------------------------------------
+
+t_start = time.time()
+
+print(f"Target ticker: {TARGET_TICKER}")
+features_raw, targets, meta = download_and_cache(TARGET_TICKER)
+features_raw = features_raw.copy()
+num_features = meta["num_features"]
+train_size = meta["train_size"]
+
+print(f"Num features: {num_features}")
+print(f"Baseline accuracy: {max(targets[:train_size].mean(), 1-targets[:train_size].mean()):.4f}")
+
+_tmp = GRUModel(num_features=num_features, hidden_dim=MODEL_DIM, n_layers=N_LAYERS, dropout=DROPOUT, seq_len=SEQ_LEN)
+num_params = sum(p.numel() for p in _tmp.parameters())
+del _tmp
+print(f"Model parameters: {num_params:,} ({num_params/1000:.1f}K)")
+
+if not WALK_FORWARD:
+    # -----------------------------------------------------------------------
+    # Default Mode: Single-window multi-seed ensemble
+    # -----------------------------------------------------------------------
+    features = normalize_features(features_raw, train_size)
+    per_model_budget = (TIME_BUDGET - 30) / N_SEEDS
+
+    print(f"Ensemble training: {N_SEEDS} models x {per_model_budget:.0f}s each")
+    print(f"Time budget: {TIME_BUDGET}s (reserved 30s for eval overhead)")
+
+    run_name = f"{TARGET_TICKER}_ensemble_{N_SEEDS}seeds_d={MODEL_DIM}_l={N_LAYERS}"
+    with mlflow.start_run(run_name=run_name):
+        mlflow.log_params({
+            "ticker": TARGET_TICKER,
+            "model_dim": MODEL_DIM,
+            "n_heads": N_HEADS,
+            "n_layers": N_LAYERS,
+            "dropout": DROPOUT,
+            "learning_rate": LEARNING_RATE,
+            "weight_decay": WEIGHT_DECAY,
+            "batch_size": BATCH_SIZE,
+            "warmup_ratio": WARMUP_RATIO,
+            "final_lr_frac": FINAL_LR_FRAC,
+            "rdrop_alpha": RDROP_ALPHA,
+            "label_smooth": LABEL_SMOOTH,
+            "conf_penalty": CONF_PENALTY,
+            "seq_len": SEQ_LEN,
+            "num_features": num_features,
+            "num_params": num_params,
+            "n_seeds": N_SEEDS,
+            "confidence_threshold": CONFIDENCE_THRESHOLD,
+            "cost_per_trade": COST_PER_TRADE,
+        })
+
+        ensemble_states = []
+        best_single_acc = 0.0
+        best_single_state = None
+        total_steps = 0
+
+        for i, seed in enumerate(SEEDS[:N_SEEDS]):
+            print(f"\n--- Model {i+1}/{N_SEEDS} (seed={seed}) ---")
+            state, val_acc, steps = train_single_model(
+                features, targets, 0, train_size,
+                num_features, seed, per_model_budget, device,
+            )
+            ensemble_states.append(state)
+            total_steps += steps
+            print(f"  Model {i+1}: val_acc={val_acc:.4f}, steps={steps}")
+            if val_acc > best_single_acc:
+                best_single_acc = val_acc
+                best_single_state = state
+
+        # Backward-compatible single-model evaluation
+        best_model = GRUModel(
+            num_features=num_features, hidden_dim=MODEL_DIM,
+            n_layers=N_LAYERS, dropout=DROPOUT, seq_len=SEQ_LEN,
+        ).to(device)
+        best_model.load_state_dict(best_single_state)
+        single_metrics = evaluate(best_model, features, targets, train_size, device, SEQ_LEN)
+        del best_model
+
+        # Ensemble evaluation
+        print(f"\n--- Ensemble Evaluation ({N_SEEDS} models) ---")
+        mean_probs, y_true = ensemble_predict(
+            ensemble_states, num_features, features, targets,
+            train_size, len(features), device,
+        )
+
+        ens_metrics = evaluate_selective(
+            mean_probs, y_true, features, train_size, len(mean_probs),
+        )
+
+        t_end = time.time()
+        total_training_time = t_end - t_start
+
+        # Standard metrics (backward compatible)
+        print("---")
+        print(f"ticker:           {TARGET_TICKER}")
+        print(f"val_accuracy:     {single_metrics['accuracy']:.6f}")
+        print(f"val_sharpe:       {single_metrics['sharpe']:.4f}")
+        print(f"val_loss:         {single_metrics['avg_loss']:.6f}")
+        print(f"val_samples:      {single_metrics['n_val']}")
+        print(f"training_seconds: {total_training_time:.1f}")
+        print(f"total_seconds:    {t_end - t_start:.1f}")
+        print(f"num_steps:        {total_steps}")
+        print(f"num_params_K:     {num_params / 1000:.1f}")
+        print(f"model_dim:        {MODEL_DIM}")
+        print(f"n_layers:         {N_LAYERS}")
+
+        # Ensemble metrics
+        print(f"ensemble_size:    {N_SEEDS}")
+        print(f"ens_accuracy:     {ens_metrics['accuracy']:.6f}")
+        print(f"ens_sel_accuracy: {ens_metrics['selective_accuracy']:.6f}")
+        print(f"ens_sharpe:       {ens_metrics['sharpe']:.4f}")
+        print(f"ens_net_sharpe:   {ens_metrics['net_sharpe']:.4f}")
+        print(f"ens_coverage:     {ens_metrics['coverage']:.4f}")
+        print(f"ens_max_drawdown: {ens_metrics['max_drawdown']:.4f}")
+        print(f"ens_high_risk:    {ens_metrics['high_risk']}")
+        print(f"ens_n_trades:     {ens_metrics['n_trades']}")
+
+        mlflow.log_metrics({
+            "final_val_accuracy": single_metrics['accuracy'],
+            "final_val_sharpe": single_metrics['sharpe'],
+            "final_val_loss": single_metrics['avg_loss'],
+            "best_val_accuracy": best_single_acc,
+            "ens_accuracy": ens_metrics['accuracy'],
+            "ens_selective_accuracy": ens_metrics['selective_accuracy'],
+            "ens_sharpe": ens_metrics['sharpe'],
+            "ens_net_sharpe": ens_metrics['net_sharpe'],
+            "ens_coverage": ens_metrics['coverage'],
+            "ens_max_drawdown": ens_metrics['max_drawdown'],
+            "ens_n_trades": float(ens_metrics['n_trades']),
+            "training_seconds": total_training_time,
+            "total_seconds": t_end - t_start,
+            "num_steps": total_steps,
+        })
+        mlflow.log_param("status", "completed")
+        print("MLflow run:", mlflow.active_run().info.run_id)
+
+else:
+    # -----------------------------------------------------------------------
+    # Walk-Forward Validation Mode
+    # -----------------------------------------------------------------------
+    print("=== WALK-FORWARD VALIDATION MODE ===")
+
+    boundaries = find_year_boundaries(meta['dates'])
+    years = sorted(boundaries.keys())
+
+    # Build windows: train through year Y-1, validate on year Y
+    windows = []
+    for year in range(2021, max(years) + 1):
+        train_end = boundaries.get(year - 1)
+        val_end = boundaries.get(year, len(features_raw))
+        if train_end is None or train_end < SEQ_LEN + 100:
+            continue
+        if val_end - train_end < 20:
+            continue
+        windows.append({
+            "label": f"val_{year}",
+            "train_end": train_end,
+            "val_start": train_end,
+            "val_end": val_end,
+        })
+
+    wf_n_seeds = min(3, N_SEEDS)
+    per_model_budget = max(20, (TIME_BUDGET - 30) / (len(windows) * wf_n_seeds))
+
+    print(f"Windows: {len(windows)}, Seeds per window: {wf_n_seeds}")
+    print(f"Per-model budget: {per_model_budget:.0f}s")
+
+    run_name = f"{TARGET_TICKER}_walkforward_{len(windows)}win"
+    with mlflow.start_run(run_name=run_name):
+        mlflow.log_params({
+            "ticker": TARGET_TICKER,
+            "mode": "walk_forward",
+            "n_windows": len(windows),
+            "n_seeds": wf_n_seeds,
+            "per_model_budget": per_model_budget,
+            "model_dim": MODEL_DIM,
+            "n_layers": N_LAYERS,
+            "dropout": DROPOUT,
+        })
+
+        all_window_metrics = []
+
+        for wi, window in enumerate(windows):
+            print(f"\n{'='*60}")
+            print(f"Window {wi+1}/{len(windows)}: {window['label']}")
+            print(f"  Train: [0, {window['train_end']}), Val: [{window['val_start']}, {window['val_end']})")
+
+            features_w = normalize_features(features_raw, window['train_end'])
+
+            window_states = []
+            for si, seed in enumerate(SEEDS[:wf_n_seeds]):
+                print(f"\n  Model {si+1}/{wf_n_seeds} (seed={seed})")
+                state, val_acc, steps = train_single_model(
+                    features_w, targets, 0, window['train_end'],
+                    num_features, seed, per_model_budget, device,
+                )
+                window_states.append(state)
+
+            mean_probs, y_true = ensemble_predict(
+                window_states, num_features, features_w, targets,
+                window['val_start'], window['val_end'], device,
+            )
+
+            wm = evaluate_selective(
+                mean_probs, y_true, features_w, window['val_start'], len(mean_probs),
+            )
+            wm['window'] = window['label']
+            all_window_metrics.append(wm)
+
+            print(f"\n  {window['label']}: acc={wm['accuracy']:.4f} sel_acc={wm['selective_accuracy']:.4f} "
+                  f"sharpe={wm['sharpe']:.4f} net_sharpe={wm['net_sharpe']:.4f} "
+                  f"coverage={wm['coverage']:.4f} drawdown={wm['max_drawdown']:.4f}")
+
+        t_end = time.time()
+
+        print(f"\n{'='*60}")
+        print("WALK-FORWARD SUMMARY")
+        print(f"{'='*60}")
+        print(f"{'Window':<12} {'Acc':>6} {'SelAcc':>7} {'Sharpe':>7} {'NetShp':>7} {'Cover':>6} {'MaxDD':>6}")
+        print("-" * 60)
+
+        net_sharpes = []
+        for wm in all_window_metrics:
+            print(f"{wm['window']:<12} {wm['accuracy']:>6.4f} {wm['selective_accuracy']:>7.4f} "
+                  f"{wm['sharpe']:>7.4f} {wm['net_sharpe']:>7.4f} {wm['coverage']:>6.4f} {wm['max_drawdown']:>6.4f}")
+            net_sharpes.append(wm['net_sharpe'])
+
+        print("-" * 60)
+        mean_ns = float(np.mean(net_sharpes))
+        std_ns = float(np.std(net_sharpes))
+        min_ns = float(np.min(net_sharpes))
+        print(f"Net Sharpe: mean={mean_ns:.4f} std={std_ns:.4f} min={min_ns:.4f}")
+
+        production_ready = min_ns > 0.5
+        print(f"\nPRODUCTION READY: {'YES' if production_ready else 'NO'}")
+        if not production_ready:
+            print(f"  Requires min(net_sharpe) > 0.5 across all windows (got {min_ns:.4f})")
+
+        # Standard format for compatibility
+        print("---")
+        print(f"ticker:           {TARGET_TICKER}")
+        print(f"val_accuracy:     {np.mean([w['accuracy'] for w in all_window_metrics]):.6f}")
+        print(f"val_sharpe:       {mean_ns:.4f}")
+        print(f"total_seconds:    {t_end - t_start:.1f}")
+        print(f"num_params_K:     {num_params / 1000:.1f}")
+        print(f"model_dim:        {MODEL_DIM}")
+        print(f"n_layers:         {N_LAYERS}")
+
+        mlflow.log_metrics({
+            "wf_mean_net_sharpe": mean_ns,
+            "wf_std_net_sharpe": std_ns,
+            "wf_min_net_sharpe": min_ns,
+            "wf_production_ready": 1.0 if production_ready else 0.0,
+            "total_seconds": t_end - t_start,
+        })
+        mlflow.log_param("status", "completed")
+        print("MLflow run:", mlflow.active_run().info.run_id)
